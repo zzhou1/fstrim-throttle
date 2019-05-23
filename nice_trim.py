@@ -8,15 +8,6 @@ from random import random
 from subprocess import check_output
 
 
-LOG_FORMAT = '%(asctime)s %(levelname)s %(name)s %(message)s'
-formatter = logging.Formatter(LOG_FORMAT)
-file_handler = logging.FileHandler('/var/log/nice_trim.log')
-file_handler.setFormatter(formatter)
-file_handler.setLevel('INFO')
-log = logging.getLogger('nice_trim')
-log.addHandler(file_handler)
-log.setLevel(logging.DEBUG)
-
 
 def get_trimable():
     '''Get dict mapping mount point to fs size for each mounted trimable FS'''
@@ -94,15 +85,38 @@ _prog_epilog = \
 
 
 def main(argv=sys.argv):
+
     parser = argparse.ArgumentParser(description=__doc__,
-                                     epilog='Some space may be trimmed more than once ')
+                                     epilog='Some space may be trimmed more than once ',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter
+                                    )
     parser.add_argument('mount', nargs='*', help="Mount points we are trimming")
-    parser.add_argument('-a', '--all', action='store_true')
-    parser.add_argument('-c', '--chunk-size', default='4GiB')
-    parser.add_argument('-s', '--sleep-range', default='0.5,480')
-    parser.add_argument('-m', '--min-extent', default='16MiB')
+    parser.add_argument('-a', '--all', action='store_true',
+                        help="this overrides any mount point")
+    parser.add_argument('-c', '--chunk-size', default='4GiB',
+                        help=" ")
+    parser.add_argument('-s', '--sleep-range', default='0.5,480',
+                        help=" ")
+    parser.add_argument('-m', '--min-extent', default='16MiB',
+                        help=" ")
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args(argv[1:])
+
+    if len(argv) == 1:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+
+    if os.getuid() != 0: 
+        parser.error("please run as a root user. Refer to -h | --help")
+
+    LOG_FORMAT = '%(asctime)s %(levelname)s %(name)s %(message)s'
+    formatter = logging.Formatter(LOG_FORMAT)
+    file_handler = logging.FileHandler('/var/log/nice_trim.log')
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel('INFO')
+    log = logging.getLogger('nice_trim')
+    log.addHandler(file_handler)
+    log.setLevel(logging.DEBUG)
 
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)

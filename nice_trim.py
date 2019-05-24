@@ -2,12 +2,13 @@
 '''Run fstrim in chunks and sleep in between.
 '''
 from __future__ import print_function, division
-import os, sys, argparse, time, string, re, logging
+import os, sys, argparse, time, string, re, logging, locale
 from datetime import datetime
 from random import random
 from subprocess import check_output
 
-
+locale.setlocale(locale.LC_ALL, 'en_US')
+flag_for_machine=False
 
 def get_trimable():
     '''Get dict mapping mount point to fs size for each mounted trimable FS'''
@@ -62,6 +63,14 @@ def human_readable_to_bytes(hr_str):
     suff = hr_str[-suf_len:]
     return num * hr_suff[suff]
 
+#def for_machine_or_human(num):
+def fmt(num):
+    global flag_for_machine
+    if flag_for_machine:
+        s=num
+    else:
+        s=locale.format("%d", num, grouping=True)
+    return s
 
 def do_trim(offset, chunk_bytes, min_bytes, mount):
     fst_out = check_output(['ionice', '-c', 'idle',
@@ -105,6 +114,8 @@ def main(argv=sys.argv):
                         help='''Minimum contiguous free range to discard, in
                         bytes, which is rounded up to the filesystem block
                         size.''')
+    parser.add_argument('-n', '--for-machine', action='store_true',
+                        help="no thousands separators for bytes in the output")
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args(argv[1:])
 
@@ -150,16 +161,19 @@ def main(argv=sys.argv):
         for mount in args.mount:
             mounts[mount] = get_size(mount)
 
-    min_sleep = float(min_sleep)
-    max_sleep = float(max_sleep)
-    sleep_range = max_sleep - min_sleep
-    log.info("[min_sleep, max_sleep] = %s" % [min_sleep, max_sleep])
-
     chunk_bytes = human_readable_to_bytes(args.chunk_size)
     log.info("[chunk_size] = [%s], to search for free block to discard" % args.chunk_size)
 
     min_bytes = human_readable_to_bytes(args.min_extent)
     log.info("[min_extent] = [%s], min contiguous free range to discard" % args.min_extent)
+
+    global flag_for_machine
+    flag_for_machine = args.for_machine
+
+    min_sleep = float(min_sleep)
+    max_sleep = float(max_sleep)
+    sleep_range = max_sleep - min_sleep
+    log.info("[min_sleep, max_sleep] = %s, in seconds" % [min_sleep, max_sleep])
 
     # TODO: Should populate this from the FS allocation group size
     #max_discard = human_readable_to_bytes('1TiB')
@@ -176,12 +190,13 @@ def main(argv=sys.argv):
             sleep_time = random() * max_range + min_sleep
             log.info("Sleeping for %.2f seconds" % sleep_time)
             time.sleep(sleep_time)
-            log.info("Running the trim command with offset: %d" % offset)
+            log.info("Running the trim command with offset: %s" % fmt(offset))
             start_time = datetime.now()
             n_disc = do_trim(offset, chunk_bytes, min_bytes, mount)
             trim_time = datetime.now() - start_time
             if n_disc > chunk_bytes:
-                log.info("Hit large free extent, moving offset forward %d bytes" % n_disc)
+                log.info('''Hit large free extent, moving offset forward %s
+                         bytes''' % fmt(n_disc))
                 offset += n_disc
                 last_chunk = n_disc
             else:
@@ -189,7 +204,7 @@ def main(argv=sys.argv):
                 last_chunk = chunk_bytes
             discarded += n_disc
             log.info("Trim took: %s" % trim_time)
-        log.info("Discarded roughly %d bytes" % discarded)
+        log.info("Discarded roughly %s bytes" % fmt(discarded))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 #! /usr/bin/env python
-'''Run fstrim in chunks and sleep in between
+'''Run fstrim in chunks and sleep in between.
 '''
 from __future__ import print_function, division
 import os, sys, argparse, time, string, re, logging
@@ -81,24 +81,30 @@ def do_trim(offset, chunk_bytes, min_bytes, mount):
 
 _prog_epilog = \
     '''Some space may be trimmed more than once due to the limitations of
-    fstrim, and the reported amount of discarded bytes could be inflated.'''
+    fstrim, and the reported amount of discarded bytes could be inflated.
+
+    The valid human readable format includes KiB, MiB, GiB, TiB, KB, MB, GB,
+    and TB. '''
 
 
 def main(argv=sys.argv):
 
     parser = argparse.ArgumentParser(description=__doc__,
-                                     epilog='Some space may be trimmed more than once ',
+                                     #epilog='Some space may be trimmed more than once ',
+                                     epilog=_prog_epilog,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter
                                     )
     parser.add_argument('mount', nargs='*', help="Mount points we are trimming")
     parser.add_argument('-a', '--all', action='store_true',
                         help="this overrides any mount point")
     parser.add_argument('-c', '--chunk-size', default='4GiB',
-                        help=" ")
-    parser.add_argument('-s', '--sleep-range', default='0.5,480',
-                        help=" ")
+                        help="The number of bytes to search for free blocks to discard.")
+    parser.add_argument('-s', '--sleep-range', default='0.5',
+                        help="in seconds, eg. 0.5, or a random range '0.5,480' ")
     parser.add_argument('-m', '--min-extent', default='16MiB',
-                        help=" ")
+                        help='''Minimum contiguous free range to discard, in
+                        bytes, which is rounded up to the filesystem block
+                        size.''')
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args(argv[1:])
 
@@ -126,6 +132,15 @@ def main(argv=sys.argv):
         stream_handler.setLevel(logging.WARN)
     log.addHandler(stream_handler)
 
+    r = args.sleep_range.split(',')
+    if len(r) == 1:
+        min_sleep = r[0]
+        max_sleep = min_sleep
+    elif len(r) == 2:
+        min_sleep, max_sleep = r
+    else:
+        parser.error("incorrect --sleep_range format")
+
     if args.all:
         if len(args.mount) != 0:
             parser.error("No mounts should be given if --all is specified")
@@ -135,15 +150,20 @@ def main(argv=sys.argv):
         for mount in args.mount:
             mounts[mount] = get_size(mount)
 
-    min_sleep, max_sleep = args.sleep_range.split(',')
     min_sleep = float(min_sleep)
     max_sleep = float(max_sleep)
     sleep_range = max_sleep - min_sleep
+    log.info("[min_sleep, max_sleep] = %s" % [min_sleep, max_sleep])
 
     chunk_bytes = human_readable_to_bytes(args.chunk_size)
+    log.info("[chunk_size] = [%s], to search for free block to discard" % args.chunk_size)
+
     min_bytes = human_readable_to_bytes(args.min_extent)
+    log.info("[min_extent] = [%s], min contiguous free range to discard" % args.min_extent)
+
     # TODO: Should populate this from the FS allocation group size
-    max_discard = human_readable_to_bytes('1TiB')
+    #max_discard = human_readable_to_bytes('1TiB')
+    max_discard = chunk_bytes
 
     for mount, fs_size in mounts.items():
         log.info("Processing mount point: %s" % mount)
@@ -153,8 +173,8 @@ def main(argv=sys.argv):
         while offset < fs_size:
             sleep_frac = min(float(last_chunk) / max_discard, 1.0)
             max_range = sleep_range * sleep_frac
-            sleep_time = int((random() * max_range) + min_sleep)
-            log.info("Sleeping for %d seconds" % sleep_time)
+            sleep_time = random() * max_range + min_sleep
+            log.info("Sleeping for %.2f seconds" % sleep_time)
             time.sleep(sleep_time)
             log.info("Running the trim command with offset: %d" % offset)
             start_time = datetime.now()

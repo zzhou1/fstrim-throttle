@@ -1,6 +1,6 @@
 #! /usr/bin/env python
-'''Run fstrim in chunks and sleep in between.
-'''
+
+
 from __future__ import print_function, division
 import os, sys, argparse, time, string, re, logging, locale
 from datetime import datetime
@@ -8,7 +8,9 @@ from random import random
 from subprocess import check_output
 
 locale.setlocale(locale.LC_ALL, 'en_US')
+
 flag_for_machine=False
+LOGFILE='/var/log/nice_trim.log'
 
 def get_trimable():
     '''Get dict mapping mount point to fs size for each mounted trimable FS'''
@@ -87,18 +89,28 @@ def do_trim(offset, chunk_bytes, min_bytes, mount):
     assert test == 'bytes'
     return int(b_str)
 
+_desc = \
+    '''
+    A wrap of fstrim. It runs fstrim in chunks and sleep in between.
+
+    The valid human readable format includes KiB, MiB, GiB, TiB, KB, MB, GB,
+    and TB.
+
+    The log file is at "%s"''' % LOGFILE
 
 _prog_epilog = \
     '''Some space may be trimmed more than once due to the limitations of
     fstrim, and the reported amount of discarded bytes could be inflated.
 
-    The valid human readable format includes KiB, MiB, GiB, TiB, KB, MB, GB,
-    and TB. '''
-
+    It intends to leave some free IO bandwith to allow the normal WRITE
+    requests get through to the backend block device. A plain fstrim might
+    initiate intensive DISCARD requests, saturate IO, cause the long freeze,
+    and harm the critical service in the end.
+    '''
 
 def main(argv=sys.argv):
 
-    parser = argparse.ArgumentParser(description=__doc__,
+    parser = argparse.ArgumentParser(description=_desc,
                                      #epilog='Some space may be trimmed more than once ',
                                      epilog=_prog_epilog,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -126,9 +138,10 @@ def main(argv=sys.argv):
     if os.getuid() != 0: 
         parser.error("please run as a root user. Refer to -h | --help")
 
+    global LOGFILE
     LOG_FORMAT = '%(asctime)s %(levelname)s %(name)s %(message)s'
     formatter = logging.Formatter(LOG_FORMAT)
-    file_handler = logging.FileHandler('/var/log/nice_trim.log')
+    file_handler = logging.FileHandler(LOGFILE)
     file_handler.setFormatter(formatter)
     file_handler.setLevel('INFO')
     log = logging.getLogger('nice_trim')

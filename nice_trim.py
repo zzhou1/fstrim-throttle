@@ -17,8 +17,6 @@ from subprocess import check_output
 
 locale.setlocale(locale.LC_ALL, 'en_US')
 
-LOGFILE = '/var/log/nice_trim.log'
-
 def get_trimable():
     'helper function'
     result = {}
@@ -131,13 +129,17 @@ def cli_parser():
     parser.add_argument('-a', '--all', action='store_true',
                         help="this overrides any mount point")
     parser.add_argument('-c', '--chunk-size', default='4GiB',
-                        help="The number of bytes to search for free blocks to discard.")
+                        help="The number of bytes to search for free blocks to discard")
     parser.add_argument('-s', '--sleep-range', default='0.5',
                         help="in seconds, eg. 0.5, or a random range '0.5,480' ")
     parser.add_argument('-m', '--min-extent', default='16MiB',
                         help='''Minimum contiguous free range to discard, in
                         bytes, which is rounded up to the filesystem block
-                        size.''')
+                        size''')
+    default_log_file = '/var/log/nice_trim.log'
+    parser.add_argument('-l', '--log-file', nargs='?', type=str,
+                        default=default_log_file,
+                        help="STDOUT if unspecified")
     parser.add_argument('-n', '--for-machine', action='store_true',
                         help="no thousands separators for bytes in the output")
     parser.add_argument('-v', '--verbose', action='store_true')
@@ -158,15 +160,13 @@ def cli_parser():
     if args.all and args.mount:
         parser.error("No mounts should be given if --all is specified")
 
-    if args.log_file == default_log_file:
-        args.log_file = '/dev/stdout'
-    if not args.log_file:
-        args.log_file = default_log_file
-        print("default_log_file: "+default_log_file)
+    log = setup_log_file(args)
 
     args.chunk_size = human_readable_to_bytes(args.chunk_size)
     if args.chunk_size < 0:
         parser.error('incorrect human readable format in --chunk-size option')
+    log.info("[chunk_size = %s] to search for free block to discard",
+             fmt(args.chunk_size, args.bytes))
 
     args.min_extent = human_readable_to_bytes(args.min_extent)
     if args.min_extent < 0:
@@ -182,10 +182,10 @@ def cli_parser():
 
     return args, log
 
-def setup_log_file(args, logfile):
+def setup_log_file(args):
     'helper function'
     formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s')
-    file_handler = logging.FileHandler(logfile)
+    file_handler = logging.FileHandler(args.log_file)
     file_handler.setFormatter(formatter)
     file_handler.setLevel('INFO')
     log = logging.getLogger('nice_trim')
@@ -258,4 +258,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main(LOGFILE))
+    sys.exit(main())

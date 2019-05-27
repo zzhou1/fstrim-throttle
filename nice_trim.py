@@ -66,14 +66,20 @@ HR_STUFF = {'' : 1,
 def human_readable_to_bytes(hr_str):
     'helper function'
     hr_str = hr_str.lower()
-    if hr_str[-3] not in string.digits:
+    if len(hr_str) >= 4 and hr_str[-4] not in string.digits:
+        return -1
+    if len(hr_str) >= 3 and hr_str[-3] not in string.digits:
         suf_len = 3
-    elif hr_str[-2] not in string.digits:
+    elif len(hr_str) >= 2 and hr_str[-2] not in string.digits:
         suf_len = 2
-    elif hr_str[-1] not in string.digits:
+    elif len(hr_str) >= 1 and hr_str[-1] not in string.digits:
         suf_len = 1
     else:
         suf_len = 0
+    if len(hr_str) == suf_len:
+        return -1
+    if suf_len < 1:
+        return int(hr_str)
     num = int(hr_str[:-suf_len])
     suff = hr_str[-suf_len:]
     if suff in HR_STUFF:

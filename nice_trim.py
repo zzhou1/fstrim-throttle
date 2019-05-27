@@ -50,6 +50,10 @@ def get_size(mount):
 
 
 HR_STUFF = {'' : 1,
+            'k' : 1024,
+            'm' : 1024*1024,
+            'g' : 1024**3,
+            't' : 1024**4,
             'kib' : 1024,
             'mib' : 1024*1024,
             'gib' : 1024**3,
@@ -68,11 +72,15 @@ def human_readable_to_bytes(hr_str):
         suf_len = 3
     elif hr_str[-2] not in string.digits:
         suf_len = 2
+    elif hr_str[-1] not in string.digits:
+        suf_len = 1
     else:
         suf_len = 0
     num = int(hr_str[:-suf_len])
     suff = hr_str[-suf_len:]
-    return num * HR_STUFF[suff]
+    if suff in HR_STUFF:
+        return num * HR_STUFF[suff]
+    return -1
 
 def fmt(num, flag_for_machine):
     'helper function'
@@ -102,8 +110,9 @@ _DESC = __doc__ + '''
     fstrim might initiate intensive DISCARD requests, saturate IO, cause the
     long freeze, and harm the critical service.
 
-    The human readable format includes KiB, MiB, GiB, TiB, KB, MB, GB, and TB.
-    The log file is at ''' + LOGFILE
+    The human readable format includes K/KiB, M/MiB, G/GiB, T/TiB, KB, MB, GB,
+    and TB.
+    '''
 
 #_prog_epilog = \
 #    '''
@@ -149,7 +158,29 @@ def cli_parser():
     if args.all and args.mount:
         parser.error("No mounts should be given if --all is specified")
 
-    return parser.parse_args(sys.argv[1:])
+    if args.log_file == default_log_file:
+        args.log_file = '/dev/stdout'
+    if not args.log_file:
+        args.log_file = default_log_file
+        print("default_log_file: "+default_log_file)
+
+    args.chunk_size = human_readable_to_bytes(args.chunk_size)
+    if args.chunk_size < 0:
+        parser.error('incorrect human readable format in --chunk-size option')
+
+    args.min_extent = human_readable_to_bytes(args.min_extent)
+    if args.min_extent < 0:
+        parser.error('incorrect human readable format in --min_extent option')
+
+    log = setup_log_file(args)
+
+    log.info("[chunk_size] = [%s], to search for free block to discard",
+             fmt(args.chunk_size, args.for_machine))
+
+    log.info("[min_extent] = [%s], min contiguous free range to discard",
+             fmt(args.min_extent, args.for_machine))
+
+    return args, log
 
 def setup_log_file(args, logfile):
     'helper function'
@@ -170,10 +201,9 @@ def setup_log_file(args, logfile):
     log.addHandler(stream_handler)
     return log
 
-def main(logfile):
-
-    args = cli_parser()
-    log = setup_log_file(args, logfile)
+def main():
+    'main function'
+    args, log = cli_parser()
 
     tmp = args.sleep_range.split(',')
     if len(tmp) == 1:
@@ -189,12 +219,6 @@ def main(logfile):
         for mount in args.mount:
             mounts[mount] = get_size(mount)
 
-    chunk_bytes = human_readable_to_bytes(args.chunk_size)
-    log.info("[chunk_size] = [%s], to search for free block to discard", args.chunk_size)
-
-    min_bytes = human_readable_to_bytes(args.min_extent)
-    log.info("[min_extent] = [%s], min contiguous free range to discard", args.min_extent)
-
     min_sleep = float(min_sleep)
     max_sleep = float(max_sleep)
     sleep_range = max_sleep - min_sleep
@@ -202,7 +226,7 @@ def main(logfile):
 
     # TODO: Should populate this from the FS allocation group size
     #max_discard = human_readable_to_bytes('1TiB')
-    max_discard = chunk_bytes
+    max_discard = args.chunk_size
 
     for mount, fs_size in mounts.items():
         log.info("Processing mount point: %s", mount)
@@ -218,16 +242,16 @@ def main(logfile):
             log.info("Running the trim command with offset: %s",
                      fmt(offset, args.for_machine))
             start_time = datetime.now()
-            n_disc = do_trim(offset, chunk_bytes, min_bytes, mount)
+            n_disc = do_trim(offset, args.chunk_size, args.min_extent, mount)
             trim_time = datetime.now() - start_time
-            if n_disc > chunk_bytes:
+            if n_disc > args.chunk_size:
                 log.info("Hit large free extent, moving offset forward %s bytes",
                          fmt(n_disc, args.for_machine))
                 offset += n_disc
                 last_chunk = n_disc
             else:
-                offset += chunk_bytes
-                last_chunk = chunk_bytes
+                offset += args.chunk_size
+                last_chunk = args.chunk_size
             discarded += n_disc
             log.info("Trim took: %s", trim_time)
         log.info("Discarded roughly %s bytes", fmt(discarded, args.for_machine))

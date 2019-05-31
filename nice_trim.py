@@ -204,7 +204,10 @@ mount_point    mount points we are trimming
         parser.error("incorrect --sleep_range format")
 
     if args.all and args.mount:
-        parser.error("No mounts should be given if --all is specified")
+        parser.error("no mountpoint should be given if --all is specified")
+
+    if not args.all and not args.mount:
+        parser.error("no mountpoint specified")
 
     log = setup_log_file(args)
 

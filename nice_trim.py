@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 '''
-A wrap of fstrim. It runs fstrim in chunks and sleep in between.
+A wrapper of fstrim. It runs fstrim in chunks and sleep in between.
 '''
 from __future__ import print_function, division
 import os
@@ -33,19 +33,33 @@ def get_trimable():
             continue
         if blk_info['RO'] == '1':
             continue
-        result[blk_info['MOUNTPOINT']] = int(blk_info['SIZE'])
+        #result[blk_info['MOUNTPOINT']] = int(blk_info['SIZE'])
+        result[blk_info['MOUNTPOINT']] = ['/dev/'+blk_info['NAME'], int(blk_info['SIZE'])]
     return result
 
 
-def get_size(mount):
+def get_devpath_size(mount):
     'helper function'
     df_out = [l for l in check_output(['df', '-B', '1', mount]).split('\n') if l != '']
     assert len(df_out) == 2
-    _dev, size, _, _, _, real_mount = df_out[1].split()
+    dev, size, _, _, _, real_mount = df_out[1].split()
     if real_mount != mount:
         raise ValueError("Not a mountpoint: %s" % mount)
-    return int(size)
+    return [dev, int(size)]
 
+def get_fs_block_size(dev_path):
+    'helper function'
+    blockdev_out = check_output(['blockdev', '--getbsz', dev_path]).strip()
+    assert int(blockdev_out) > 1
+    return int(blockdev_out)
+
+def round_up_to_fs_block_size(size, dev_path, log):
+    'helper function'
+    fs_block_size = max(size, get_fs_block_size(dev_path))
+    if size < fs_block_size:
+        log.info("[chunk_size = %s] get rounded up to the filesystem blocksize",
+                 fs_block_size)
+    return fs_block_size
 
 HR_STUFF = {'' : 1,
             'k' : 1024,
@@ -86,9 +100,9 @@ def human_readable_to_bytes(hr_str):
         return num * HR_STUFF[suff]
     return -1
 
-def fmt(num, flag_for_machine):
+def fmt(num, flag_for_bytes):
     'helper function'
-    if flag_for_machine:
+    if flag_for_bytes:
         return num
     return locale.format("%d", num, grouping=True)
 
@@ -109,14 +123,16 @@ def do_trim(offset, chunk_bytes, min_bytes, mount):
     return int(b_str)
 
 _DESC = __doc__ + '''
-    It intends to throttle fstrim and leave some free IO bandwith to allow the
-    normal WRITE requests get through to the backend block device. A plain
-    fstrim might initiate intensive DISCARD requests, saturate IO, cause the
-    long freeze, and harm the critical service.
+It intends to throttle fstrim and leave some free IO bandwith to allow the
+normal WRITE requests get through to the backend block device. A plain fstrim
+might initiate intensive DISCARD requests, saturate IO, cause the long freeze,
+and harm the critical service.
 
-    The human readable format includes K/KiB, M/MiB, G/GiB, T/TiB, KB, MB, GB,
-    and TB.
-    '''
+The human readable format includes K/KiB, M/MiB, G/GiB, T/TiB, KB, MB, GB, TB.
+
+NOTE: when use any subdirctory under the mount point as a fstrim argument,
+kernel will turn it to the corresponding mount point or block device. 
+'''
 
 #_prog_epilog = \
 #    '''
@@ -125,30 +141,52 @@ _DESC = __doc__ + '''
 
 def cli_parser():
     'helper function'
+
     parser = argparse.ArgumentParser(description=_DESC,
                                      #epilog='Some space may be trimmed more than once ',
                                      epilog='Example: ' +
                                      os.path.basename(__file__) + ' -a',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter
+                                     #formatter_class=argparse.ArgumentDefaultsHelpFormatter
+                                     formatter_class=argparse.RawDescriptionHelpFormatter
                                     )
-    parser.add_argument('mount', nargs='*', help="Mount points we are trimming")
+    parser.add_argument('mount', nargs='*', help=argparse.SUPPRESS)
     parser.add_argument('-a', '--all', action='store_true',
                         help="this overrides any mount point")
-    parser.add_argument('-c', '--chunk-size', default='4GiB',
-                        help="The number of bytes to search for free blocks to discard")
-    parser.add_argument('-s', '--sleep-range', default='0.5',
-                        help="in seconds, eg. 0.5, or a random range '0.5,480' ")
-    parser.add_argument('-m', '--min-extent', default='16MiB',
-                        help='''Minimum contiguous free range to discard, in
-                        bytes, which is rounded up to the filesystem block
-                        size''')
+    parser.add_argument('-b', '--bytes', action='store_true',
+                        help="print SIZE in bytes rather than in human readable format")
+    parser.add_argument('-v', '--verbose', action='store_true')
+
+
+    default_chunk = '4GiB'
+    default_sleep = '0.5'
+    default_min = '16MiB'
     default_log_file = '/var/log/nice_trim.log'
+    info_option_desc = \
+'''
+mount_point    mount points we are trimming
+-c, --chunk-size <bytes>
+               to search for free blocks to discard. kernel will internally
+               round it up to a multiple of the filesystem block size. Also
+               this tool will round it up to the filesystem block size to avoid
+               fstrim error report if too small (default: %s)
+-m, --min-extent <bytes>
+               the minimum contiguous free range to discard. (default: %s)
+-s, --sleep-range <seconds>
+               eg. 0.5, or a random range '0.5,600' (default: %s)
+-l, --log-file <path>
+               use STDOUT if unspecified (default: %s)
+''' % (default_chunk, default_min, default_sleep, default_log_file)
+    parser.add_argument_group(title='information options',
+                              description=info_option_desc)
+    parser.add_argument('-c', '--chunk-size', default=default_chunk,
+                        help=argparse.SUPPRESS)
+    parser.add_argument('-s', '--sleep-range', default='0.5',
+                        help=argparse.SUPPRESS)
+    parser.add_argument('-m', '--min-extent', default='16MiB',
+                        help=argparse.SUPPRESS)
     parser.add_argument('-l', '--log-file', nargs='?', type=str,
                         default=default_log_file,
-                        help="STDOUT if unspecified")
-    parser.add_argument('-n', '--for-machine', action='store_true',
-                        help="no thousands separators for bytes in the output")
-    parser.add_argument('-v', '--verbose', action='store_true')
+                        help=argparse.SUPPRESS)
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -177,12 +215,6 @@ def cli_parser():
     args.min_extent = human_readable_to_bytes(args.min_extent)
     if args.min_extent < 0:
         parser.error('incorrect human readable format in --min_extent option')
-
-    log = setup_log_file(args)
-
-    log.info("[chunk_size] = [%s], to search for free block to discard",
-             fmt(args.chunk_size, args.for_machine))
-
     log.info("[min_extent] = [%s], min contiguous free range to discard",
              fmt(args.min_extent, args.for_machine))
 
@@ -223,19 +255,21 @@ def main():
     else:
         mounts = {}
         for mount in args.mount:
-            mounts[mount] = get_size(mount)
+            mounts[mount] = get_devpath_size(mount)
 
     min_sleep = float(min_sleep)
     max_sleep = float(max_sleep)
     sleep_range = max_sleep - min_sleep
-    log.info("[min_sleep, max_sleep] = %s, in seconds", [min_sleep, max_sleep])
+    log.info("[min, max = %s, %s] sleep in seconds", min_sleep, max_sleep)
 
     # TODO: Should populate this from the FS allocation group size
-    #max_discard = human_readable_to_bytes('1TiB')
-    max_discard = args.chunk_size
+    max_discard = human_readable_to_bytes('1TiB')
 
-    for mount, fs_size in mounts.items():
-        log.info("Processing mount point: %s", mount)
+    for mount, devpath_size in mounts.items():
+        devpath, fs_size = devpath_size
+        args.chunk_size = round_up_to_fs_block_size(args.chunk_size,
+                                                    devpath, log)
+        log.info("Processing mount point at %s: %s", devpath, mount)
         offset = 0
         discarded = 0
         last_chunk = max_discard
@@ -246,13 +280,13 @@ def main():
             log.info("Sleeping for %.2f seconds", sleep_time)
             time.sleep(sleep_time)
             log.info("Running the trim command with offset: %s",
-                     fmt(offset, args.for_machine))
+                     fmt(offset, args.bytes))
             start_time = datetime.now()
             n_disc = do_trim(offset, args.chunk_size, args.min_extent, mount)
             trim_time = datetime.now() - start_time
             if n_disc > args.chunk_size:
                 log.info("Hit large free extent, moving offset forward %s bytes",
-                         fmt(n_disc, args.for_machine))
+                         fmt(n_disc, args.bytes))
                 offset += n_disc
                 last_chunk = n_disc
             else:
@@ -260,7 +294,7 @@ def main():
                 last_chunk = args.chunk_size
             discarded += n_disc
             log.info("Trim took: %s", trim_time)
-        log.info("Discarded roughly %s bytes", fmt(discarded, args.for_machine))
+        log.info("Discarded roughly %s bytes", fmt(discarded, args.bytes))
 
 
 if __name__ == '__main__':

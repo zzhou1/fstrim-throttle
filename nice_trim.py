@@ -170,7 +170,9 @@ mount_point    mount points we are trimming
                this tool will round it up to the filesystem block size to avoid
                fstrim error report if too small (default: %s)
 -m, --min-extent <bytes>
-               the minimum contiguous free range to discard. (default: %s)
+               the minimum contiguous free range to discard. kernel will
+               internally round it up to a multiple of the filesystem block
+               size. Zero is to discard every free block (default: %s)
 -s, --sleep-range <seconds>
                eg. 0.5, or a random range '0.5,600' (default: %s)
 -l, --log-file <path>
@@ -215,8 +217,8 @@ mount_point    mount points we are trimming
     args.min_extent = human_readable_to_bytes(args.min_extent)
     if args.min_extent < 0:
         parser.error('incorrect human readable format in --min_extent option')
-    log.info("[min_extent] = [%s], min contiguous free range to discard",
-             fmt(args.min_extent, args.for_machine))
+    log.info("[min_extent = %s] min contiguous free range to discard",
+             fmt(args.min_extent, args.bytes))
 
     return args, log
 

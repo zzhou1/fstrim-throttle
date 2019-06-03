@@ -13,7 +13,7 @@ import logging
 import locale
 from datetime import datetime
 from random import random
-from subprocess import check_output
+from subprocess import check_output, CalledProcessError
 
 locale.setlocale(locale.LC_ALL, 'en_US')
 
@@ -34,7 +34,7 @@ def get_trimable():
         if blk_info['RO'] == '1':
             continue
         #result[blk_info['MOUNTPOINT']] = int(blk_info['SIZE'])
-        result[blk_info['MOUNTPOINT']] = ['/dev/'+blk_info['NAME'], int(blk_info['SIZE'])]
+        result[blk_info['MOUNTPOINT']] = ['/dev/'+blk_info['KNAME'], int(blk_info['SIZE'])]
     return result
 
 
@@ -47,15 +47,13 @@ def get_devpath_size(mount):
         raise ValueError("Not a mountpoint: %s" % mount)
     return [dev, int(size)]
 
-def get_fs_block_size(dev_path):
-    'helper function'
-    blockdev_out = check_output(['blockdev', '--getbsz', dev_path]).strip()
-    assert int(blockdev_out) > 1
-    return int(blockdev_out)
-
 def round_up_to_fs_block_size(size, dev_path, log):
     'helper function'
-    fs_block_size = max(size, get_fs_block_size(dev_path))
+    try:
+        blockdev_out = check_output(['blockdev', '--getbsz', dev_path]).strip()
+    except CalledProcessError:
+        return -1
+    fs_block_size = max(int(size), int(blockdev_out))
     if size < fs_block_size:
         log.info("[chunk_size = %s] get rounded up to the filesystem blocksize",
                  fs_block_size)
@@ -106,12 +104,16 @@ def fmt(num, flag_for_bytes):
         return num
     return locale.format("%d", num, grouping=True)
 
-def do_trim(offset, chunk_bytes, min_bytes, mount):
+def do_trim(offset, args, mount):
     'helper function'
-    fst_out = check_output(['ionice', '-c', 'idle',
-                            'fstrim', '-v', '-o', str(offset),
-                            '-l', str(chunk_bytes), '-m', str(min_bytes),
-                            mount])
+    try:
+        fst_out = check_output(['ionice', '-c', 'idle',
+                                'fstrim', '-v', '-o', str(offset),
+                                '-l', str(args.chunk_size), '-m',
+                                str(args.min_extent), mount])
+    except CalledProcessError:
+        return -1
+
     fst_out = [l.strip() for l in fst_out.split('\n') if l.strip() != '']
     assert len(fst_out) == 1
     fst_out = fst_out[0]
@@ -273,8 +275,14 @@ def main():
 
     for mount, devpath_size in mounts.items():
         devpath, fs_size = devpath_size
+
+        # TODO: LUKS is not trimable
         args.chunk_size = round_up_to_fs_block_size(args.chunk_size,
                                                     devpath, log)
+        if args.chunk_size < 0:
+            log.info('"%s" is not trimable, really, and is ignored', mount)
+            continue
+
         log.info("Processing mount point at %s: %s", devpath, mount)
         offset = 0
         discarded = 0
@@ -288,7 +296,13 @@ def main():
             log.info("Running the trim command with offset: %s",
                      fmt(offset, args.bytes))
             start_time = datetime.now()
-            n_disc = do_trim(offset, args.chunk_size, args.min_extent, mount)
+
+            # eg. [SWAP], /dev/efi are not trimable
+            n_disc = do_trim(offset, args, mount)
+            if n_disc < 0:
+                log.info('"%s" is not trimable, really, and is ignored', mount)
+                break 
+
             trim_time = datetime.now() - start_time
             if n_disc > args.chunk_size:
                 log.info("Hit large free extent, moving offset forward %s bytes",
@@ -300,7 +314,8 @@ def main():
                 last_chunk = args.chunk_size
             discarded += n_disc
             log.info("Trim took: %s", trim_time)
-        log.info("Discarded roughly %s bytes", fmt(discarded, args.bytes))
+        if n_disc > 0:
+            log.info("Discarded roughly %s bytes", fmt(discarded, args.bytes))
 
 
 if __name__ == '__main__':

@@ -123,15 +123,12 @@ def do_trim(offset, chunk_bytes, min_bytes, mount):
     return int(b_str)
 
 _DESC = __doc__ + '''
-It intends to throttle fstrim and leave some free IO bandwith to allow the
-normal WRITE requests get through to the backend block device. A plain fstrim
-might initiate intensive DISCARD requests, saturate IO, cause the long freeze,
-and harm the critical service.
+It intends to throttle fstrim and leave the room for the normal WRITE request
+IO to get through to the backend block device. A plain fstrim might initiate
+DISCARD requests, disturb ongoing IO too much, cause the long freeze, and harm
+the critical service.
 
 The human readable format includes K/KiB, M/MiB, G/GiB, T/TiB, KB, MB, GB, TB.
-
-NOTE: when use any subdirctory under the mount point as a fstrim argument,
-kernel will turn it to the corresponding mount point or block device. 
 '''
 
 #_prog_epilog = \
@@ -154,8 +151,8 @@ def cli_parser():
                         help="this overrides any mount point")
     parser.add_argument('-b', '--bytes', action='store_true',
                         help="print SIZE in bytes rather than in human readable format")
-    parser.add_argument('-v', '--verbose', action='store_true')
-
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='duplicate the log INFO to STDOUT as well')
 
     default_chunk = '4GiB'
     default_sleep = '0.5'
@@ -163,7 +160,8 @@ def cli_parser():
     default_log_file = '/var/log/nice_trim.log'
     info_option_desc = \
 '''
-mount_point    mount points we are trimming
+mount_point    mount points we are trimming. Internally, fstrim will convert any
+               directory path to the corresponding mount point or block device.
 -c, --chunk-size <bytes>
                to search for free blocks to discard. kernel will internally
                round it up to a multiple of the filesystem block size. Also
@@ -173,10 +171,13 @@ mount_point    mount points we are trimming
                the minimum contiguous free range to discard. kernel will
                internally round it up to a multiple of the filesystem block
                size. Zero is to discard every free block (default: %s)
--s, --sleep-range <seconds>
-               eg. 0.5, or a random range '0.5,600' (default: %s)
--l, --log-file <path>
-               use STDOUT if unspecified (default: %s)
+-s, --sleep-range <min,max> in seconds (default: %s)
+               MIN would give a reasonable sleep between fstrim chunks.
+               MAX would give a bigger random sleep to avoid all virtual machines or
+               physical machines to stress the storage system all at once.
+               eg. a random range '0.5,600'
+               eg. 0.5 is equal to '0.5,0.5'
+-l, --log-file <path> (default: %s)
 ''' % (default_chunk, default_min, default_sleep, default_log_file)
     parser.add_argument_group(title='information options',
                               description=info_option_desc)

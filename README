@@ -1,34 +1,39 @@
-usage: nice_trim.py [-h] [-a] [-c CHUNK_SIZE] [-s SLEEP_RANGE] [-m MIN_EXTENT]
-                    [-n] [-v]
-                    [mount [mount ...]]
+usage: nice_trim.py [-h] [-a] [-b] [-v]
 
-A wrap of fstrim. It runs fstrim in chunks and sleep in between. The valid
-human readable format includes KiB, MiB, GiB, TiB, KB, MB, GB, and TB. The log
-file is at "/var/log/nice_trim.log"
+A wrapper of fstrim. It runs fstrim in chunks and sleep in between.
 
-positional arguments:
-  mount                 Mount points we are trimming (default: None)
+It intends to throttle fstrim and leave the room for the normal WRITE request
+IO to get through to the backend block device. A plain fstrim might initiate
+DISCARD requests, disturb ongoing IO too much, cause the long freeze, and harm
+the critical service.
+
+The human readable format includes K/KiB, M/MiB, G/GiB, T/TiB, KB, MB, GB, TB.
 
 optional arguments:
-  -h, --help            show this help message and exit
-  -a, --all             this overrides any mount point (default: False)
-  -c CHUNK_SIZE, --chunk-size CHUNK_SIZE
-                        The number of bytes to search for free blocks to
-                        discard. (default: 4GiB)
-  -s SLEEP_RANGE, --sleep-range SLEEP_RANGE
-                        in seconds, eg. 0.5, or a random range '0.5,480'
-                        (default: 0.5)
-  -m MIN_EXTENT, --min-extent MIN_EXTENT
-                        Minimum contiguous free range to discard, in bytes,
-                        which is rounded up to the filesystem block size.
-                        (default: 16MiB)
-  -n, --for-machine     no thousands separators for bytes in the output
-                        (default: False)
-  -v, --verbose
+  -h, --help     show this help message and exit
+  -a, --all      this overrides any mount point
+  -b, --bytes    print SIZE in bytes rather than in human readable format
+  -v, --verbose  duplicate the log INFO to STDOUT as well
 
-Some space may be trimmed more than once due to the limitations of fstrim, and
-the reported amount of discarded bytes could be inflated. It intends to leave
-some free IO bandwith to allow the normal WRITE requests get through to the
-backend block device. A plain fstrim might initiate intensive DISCARD
-requests, saturate IO, cause the long freeze, and harm the critical service in
-the end.
+information options:
+  
+  mount_point    mount points we are trimming. Internally, fstrim will convert any
+                 directory path to the corresponding mount point or block device.
+  -c, --chunk-size <bytes>
+                 to search for free blocks to discard. kernel will internally
+                 round it up to a multiple of the filesystem block size. Also
+                 this tool will round it up to the filesystem block size to avoid
+                 fstrim error report if too small (default: 4GiB)
+  -m, --min-extent <bytes>
+                 the minimum contiguous free range to discard. kernel will
+                 internally round it up to a multiple of the filesystem block
+                 size. Zero is to discard every free block (default: 16MiB)
+  -s, --sleep-range <min,max> in seconds (default: 0.5)
+                 MIN would give a reasonable sleep between fstrim chunks.
+                 MAX would give a bigger random sleep to avoid all virtual machines or
+                 physical machines to stress the storage system all at once.
+                 eg. a random range '0.5,600'
+                 eg. 0.5 is equal to '0.5,0.5'
+  -l, --log-file <path> (default: /var/log/nice_trim.log)
+
+Example: nice_trim.py -a

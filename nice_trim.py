@@ -54,26 +54,34 @@ def get_trimmable(log):
             continue
         if blk_info['RO'] == '1':
             continue
-        #result[blk_info['MOUNTPOINT']] = int(blk_info['SIZE'])
-        result[blk_info['MOUNTPOINT']] = ['/dev/'+blk_info['KNAME'], int(blk_info['SIZE'])]
+        devpath = get_devpath_from_mountpoint(blk_info['MOUNTPOINT'], log)
+        if devpath == '':
+            continue
+        result[blk_info['MOUNTPOINT']] = [devpath, int(blk_info['SIZE'])]
     return result
 
 
-def get_devpath_size(mount):
+def get_devpath_fssize(mount):
     'helper function'
     df_out = [l for l in check_output(['df', '-B', '1', mount]).split('\n') if l != '']
     assert len(df_out) == 2
     dev, size, _, _, _, real_mount = df_out[1].split()
-    if real_mount != mount:
-        raise ValueError("Not a mountpoint: %s" % mount)
-    return [dev, int(size)]
+    #if real_mount != mount:
+    #    raise ValueError("Not a mountpoint: %s" % mount)
+    return [real_mount, dev, int(size)]
 
-def round_up_to_fs_block_size(size, dev_path, log):
-    'helper function'
+# devpath is needed to detect the filesystem block size
+def round_up_to_fs_block_size(size, devpath, log):
+    '''
+    helper function to round up --chunk-size if it is too small, to avoid
+    the error report from fstrim.
+    '''
+    log.debug('devpath = %s', devpath)
     try:
-        blockdev_out = check_output(['blockdev', '--getbsz', dev_path]).strip()
+        blockdev_out = check_output(['blockdev', '--getbsz', devpath]).strip()
     except CalledProcessError:
         return -1
+    log.debug('blockdev fs block size = %s', blockdev_out)
     fs_block_size = max(int(size), int(blockdev_out))
     if size < fs_block_size:
         log.info("[chunk_size = %s] get rounded up to the filesystem blocksize",
@@ -288,7 +296,10 @@ def main():
     else:
         mounts = {}
         for mount in args.mount:
-            mounts[mount] = get_devpath_size(mount)
+            real_mount, devpath, fs_size = get_devpath_fssize(mount)
+            mounts[real_mount] = [devpath, fs_size]
+            log.debug("mountpoint = '%s', devpath = '%s', fs_size = '%s'",
+                      real_mount, devpath, fs_size)
 
     min_sleep = float(min_sleep)
     max_sleep = float(max_sleep)
@@ -308,7 +319,7 @@ def main():
             log.info('"%s" is not trimmable, really, and is ignored', mount)
             continue
 
-        log.info("Processing mount point at %s: %s", devpath, mount)
+        log.info("Processing mount point '%s' at '%s'", mount, devpath)
         offset = 0
         discarded = 0
         last_chunk = max_discard

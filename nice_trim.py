@@ -17,7 +17,28 @@ from subprocess import check_output, CalledProcessError
 
 locale.setlocale(locale.LC_ALL, 'en_US')
 
-def get_trimable():
+def get_devpath_from_mountpoint(mountpoint, log):
+    'helper function'
+    log.debug("mountpoint = '%s'", mountpoint)
+    try:
+        devpath = check_output(['findmnt', '-T', mountpoint, '-o', 'SOURCE'])
+    except CalledProcessError:
+        # ignore any invalid mountpoint, including '[SWAP]'
+        return ''
+
+    # split and collect the second line only
+    sec_line_as_devpath = devpath.split('\n')[1]
+    log.debug("devpath = '%s'", sec_line_as_devpath)
+    # deal with the btrfs snapshot form in mountpoint
+    res = sec_line_as_devpath.split('[', 1)
+    if len(res) > 1:
+        log.debug("'%s' for mount point '%s' is stripped as '%s'",
+                  sec_line_as_devpath, mountpoint, res[0])
+
+    log.debug("devpath = '%s'", res[0])
+    return res[0]
+
+def get_trimmable(log):
     'helper function'
     result = {}
     lsblk_out = check_output(['lsblk', '-POb'])
@@ -153,6 +174,8 @@ def cli_parser():
                         help="this overrides any mount point")
     parser.add_argument('-b', '--bytes', action='store_true',
                         help="print SIZE in bytes rather than in human readable format")
+    parser.add_argument('-d', '--debug', action='store_true',
+                        help='debugging information')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='duplicate the log INFO to STDOUT as well')
 
@@ -240,7 +263,9 @@ def setup_log_file(args):
 
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)
-    if args.verbose:
+    if args.debug:
+        stream_handler.setLevel(logging.DEBUG)
+    elif args.verbose:
         stream_handler.setLevel(logging.INFO)
     else:
         stream_handler.setLevel(logging.WARN)
@@ -259,7 +284,7 @@ def main():
         min_sleep, max_sleep = tmp
 
     if args.all:
-        mounts = get_trimable()
+        mounts = get_trimmable(log)
     else:
         mounts = {}
         for mount in args.mount:
@@ -276,11 +301,11 @@ def main():
     for mount, devpath_size in mounts.items():
         devpath, fs_size = devpath_size
 
-        # TODO: LUKS is not trimable
+        # eg. LUKS is not trimmable
         args.chunk_size = round_up_to_fs_block_size(args.chunk_size,
                                                     devpath, log)
         if args.chunk_size < 0:
-            log.info('"%s" is not trimable, really, and is ignored', mount)
+            log.info('"%s" is not trimmable, really, and is ignored', mount)
             continue
 
         log.info("Processing mount point at %s: %s", devpath, mount)
@@ -297,11 +322,11 @@ def main():
                      fmt(offset, args.bytes))
             start_time = datetime.now()
 
-            # eg. [SWAP], /dev/efi are not trimable
+            # eg. [SWAP], /dev/efi are not trimmable
             n_disc = do_trim(offset, args, mount)
             if n_disc < 0:
-                log.info('"%s" is not trimable, really, and is ignored', mount)
-                break 
+                log.info('"%s" is not trimmable, really, and is ignored', mount)
+                break
 
             trim_time = datetime.now() - start_time
             if n_disc > args.chunk_size:

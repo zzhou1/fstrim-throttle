@@ -1,4 +1,4 @@
-usage: nice_trim.py [-h] [-a] [-b] [-v]
+usage: nice_trim.py [-h] [-a] [-b] [-d] [-v]
 
 A wrapper of fstrim. It runs fstrim in chunks and sleep in between.
 
@@ -13,6 +13,7 @@ optional arguments:
   -h, --help     show this help message and exit
   -a, --all      this overrides any mount point
   -b, --bytes    print SIZE in bytes rather than in human readable format
+  -d, --debug    debugging information
   -v, --verbose  duplicate the log INFO to STDOUT as well
 
 information options:

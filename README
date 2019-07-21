@@ -11,7 +11,7 @@ The human readable format includes K/KiB, M/MiB, G/GiB, T/TiB, KB, MB, GB, TB.
 
 optional arguments:
   -h, --help     show this help message and exit
-  -a, --all      this overrides any mount point
+  -a, --all      auto-detect all trimmable. This overrides any mount point
   -b, --bytes    print SIZE in bytes rather than in human readable format
   -d, --debug    debugging information
   -v, --verbose  duplicate the log INFO to STDOUT as well

@@ -13,7 +13,7 @@ import logging
 import locale
 from datetime import datetime
 from random import random
-from subprocess import check_output, CalledProcessError
+from subprocess import check_output, CalledProcessError, STDOUT
 
 locale.setlocale(locale.LC_ALL, 'en_US')
 
@@ -135,12 +135,15 @@ def fmt(num, flag_for_bytes):
 
 def do_trim(offset, args, mount):
     'helper function'
+    log = logging.getLogger('nice_trim')
     try:
         fst_out = check_output(['ionice', '-c', 'idle',
                                 'fstrim', '-v', '-o', str(offset),
                                 '-l', str(args.chunk_size), '-m',
-                                str(args.min_extent), mount])
-    except CalledProcessError:
+                                str(args.min_extent), mount],
+                               stderr=STDOUT)
+    except CalledProcessError as e:
+        log.info("%s", e.output.strip())
         return -1
 
     fst_out = [l.strip() for l in fst_out.split('\n') if l.strip() != '']
@@ -179,7 +182,7 @@ def cli_parser():
                                     )
     parser.add_argument('mount', nargs='*', help=argparse.SUPPRESS)
     parser.add_argument('-a', '--all', action='store_true',
-                        help="this overrides any mount point")
+                        help="auto-detect all trimmable. This overrides any mount point")
     parser.add_argument('-b', '--bytes', action='store_true',
                         help="print SIZE in bytes rather than in human readable format")
     parser.add_argument('-d', '--debug', action='store_true',

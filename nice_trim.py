@@ -41,7 +41,7 @@ def get_devpath_from_mountpoint(mountpoint, log):
 def get_trimmable(log):
     'helper function'
     result = {}
-    lsblk_out = check_output(['lsblk', '-POb'])
+    lsblk_out = check_output(['lsblk', '-Pbo', '+DISC-GRAN'])
     lsblk_out = [l.strip() for l in lsblk_out.split('\n') if l.strip() != '']
     for out_line in lsblk_out:
         blk_info = {}
